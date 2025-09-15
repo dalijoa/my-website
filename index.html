@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎲 랜덤 이름 뽑기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Jua&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Firebase SDK Scripts (v8 for local file compatibility) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <script>
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth, userId;
+        let studentsDocRef;
+        let students = []; // Local state of students
+        let audioContext;
+        let currentClass = '1반'; // Default class
+
+        const playDrawSound = () => {
+            // Check for AudioContext support
+            if (typeof (window.AudioContext || window.webkitAudioContext) === 'undefined') {
+                console.warn('Web Audio API is not supported.');
+                return;
+            }
+
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            const gainNode = audioContext.createGain();
+            gainNode.connect(audioContext.destination);
+
+            const playNote = (frequency, duration, delay) => {
+                setTimeout(() => {
+                    const oscillator = audioContext.createOscillator();
+                    oscillator.type = 'sine';
+                    oscillator.frequency.value = frequency;
+
+                    gainNode.gain.setValueAtTime(gainNode.gain.value, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(1, audioContext.currentTime + 0.01);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+
+                    oscillator.connect(gainNode);
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), duration * 1000);
+                }, delay * 1000);
+            };
+
+            // Play a short, ascending arpeggio for a celebratory sound
+            playNote(523.25, 0.1, 0); // C5
+            playNote(659.25, 0.1, 0.15); // E5
+            playNote(783.99, 0.2, 0.3); // G5
+        };
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Set up UI elements
+            const openModalBtn = document.getElementById('openModalBtn');
+            const addNameBtn = document.getElementById('addNameBtn');
+            const closeModalBtn = document.getElementById('closeModalBtn');
+            const modal = document.getElementById('addNameModal');
+            const multiNameTextarea = document.getElementById('multiNameTextarea');
+            const drawBtn = document.getElementById('drawBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const nameList = document.getElementById('nameList');
+            const drawnList = document.getElementById('drawnList');
+            const resultText = document.getElementById('resultText');
+            const errorMessage = document.getElementById('errorMessage');
+            const classButtonsContainer = document.getElementById('classButtonsContainer');
+
+            // --- Function declarations (moved to the top to prevent ReferenceError) ---
+            const fetchFirebaseStudents = () => {
+                studentsDocRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('presenter_app_data').doc(currentClass);
+                studentsDocRef.onSnapshot((doc) => {
+                    const data = doc.data();
+                    if (data && data.list) {
+                        students = data.list;
+                    } else {
+                        students = [];
+                    }
+                    renderNames();
+                    checkDrawButtonState();
+                }, (error) => {
+                    console.error("Failed to listen to Firestore document:", error);
+                });
+            };
+
+            const addMultipleNames = async () => {
+                const namesString = multiNameTextarea.value.trim();
+                 if (!namesString) {
+                     alert('이름을 입력해주세요.');
+                     return;
+                 }
+                if (!auth.currentUser) return;
+                const names = namesString.split(',').map(name => name.trim()).filter(name => name.length > 0);
+                if (names.length === 0) return;
+                const newStudents = names.map(name => ({ name: name, selected: false }));
+                try {
+                    const docSnap = await studentsDocRef.get();
+                    if (docSnap.exists) {
+                        await studentsDocRef.update({ list: firebase.firestore.FieldValue.arrayUnion(...newStudents) });
+                    } else {
+                        await studentsDocRef.set({ list: newStudents });
+                    }
+                    multiNameTextarea.value = '';
+                    modal.classList.add('hidden'); // Close modal
+                } catch (e) { console.error("Error adding students:", e); }
+            };
+
+            const removeName = async (nameToRemove) => {
+                if (!auth.currentUser) return;
+                try {
+                    const studentToRemove = students.find(s => s.name === nameToRemove);
+                    if (studentToRemove) { await studentsDocRef.update({ list: firebase.firestore.FieldValue.arrayRemove(studentToRemove) }); }
+                } catch (e) { console.error("Error removing student:", e); }
+            };
+
+            const drawName = async () => {
+                const unselectedStudents = students.filter(student => !student.selected);
+                if (unselectedStudents.length < 1) { errorMessage.style.display = 'block'; return; }
+                errorMessage.style.display = 'none';
+                playDrawSound();
+                const finalIndex = Math.floor(Math.random() * unselectedStudents.length);
+                const finalName = unselectedStudents[finalIndex].name;
+                resultText.innerHTML = `<span class="confetti-left">🎉</span> ${finalName} <span class="confetti-right">🎉</span>`;
+                const updatedStudents = students.map(student => student.name === finalName ? { ...student, selected: true } : student);
+                try { studentsDocRef.set({ list: updatedStudents }); } catch (e) { console.error("Error updating selected student:", e); }
+            };
+
+            const resetApp = async () => {
+                if (!auth.currentUser) return;
+                try {
+                    const updatedStudents = students.map(student => ({ ...student, selected: false }));
+                    await studentsDocRef.set({ list: updatedStudents });
+                    resultText.innerHTML = '?';
+                    errorMessage.style.display = 'none';
+                } catch (e) { console.error("Error resetting app:", e); }
+            };
+            
+            // Fallback to local mode if Firebase fails or is not supported
+            function initializeLocalMode() {
+                console.log("Initializing in local mode. Data will persist on refresh.");
+                
+                const LOCAL_STORAGE_KEY_PREFIX = 'presenter_app_students_';
+
+                const getLocalStudents = (classId) => {
+                    const data = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + classId);
+                    return data ? JSON.parse(data) : [];
+                };
+
+                const saveLocalStudents = (classId, newStudents) => {
+                    localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + classId, JSON.stringify(newStudents));
+                    students = newStudents;
+                    renderNames();
+                    checkDrawButtonState();
+                };
+
+                const localAddMultipleNames = () => {
+                    const namesString = multiNameTextarea.value.trim();
+                    if (!namesString) {
+                         alert('이름을 입력해주세요.');
+                         return;
+                    }
+                    const names = namesString.split(',').map(name => name.trim()).filter(name => name.length > 0);
+                    if (names.length === 0) return;
+
+                    const newStudents = names.map(name => ({ name: name, selected: false }));
+                    const currentStudents = getLocalStudents(currentClass);
+                    
+                    const combinedList = [...currentStudents, ...newStudents];
+                    saveLocalStudents(currentClass, combinedList);
+                    multiNameTextarea.value = '';
+                    modal.classList.add('hidden'); // Close modal
+                };
+
+                const localRemoveName = (nameToRemove) => {
+                    const currentStudents = getLocalStudents(currentClass);
+                    const updatedStudents = currentStudents.filter(s => s.name !== nameToRemove);
+                    saveLocalStudents(currentClass, updatedStudents);
+                };
+
+                const localDrawName = () => {
+                    const unselectedStudents = students.filter(student => !student.selected);
+                    if (unselectedStudents.length < 1) {
+                        errorMessage.style.display = 'block';
+                        return;
+                    }
+                    errorMessage.style.display = 'none';
+                    
+                    playDrawSound();
+                    
+                    const finalIndex = Math.floor(Math.random() * unselectedStudents.length);
+                    const finalName = unselectedStudents[finalIndex].name;
+                    resultText.innerHTML = `<span class="confetti-left">🎉</span> ${finalName} <span class="confetti-right">🎉</span>`;
+                    
+                    const updatedStudents = students.map(student => 
+                        student.name === finalName ? { ...student, selected: true } : student
+                    );
+                    saveLocalStudents(currentClass, updatedStudents);
+                };
+
+                const localResetApp = () => {
+                    const updatedStudents = students.map(student => ({
+                        ...student,
+                        selected: false
+                    }));
+                    saveLocalStudents(currentClass, updatedStudents);
+                    resultText.innerHTML = '?';
+                    errorMessage.style.display = 'none';
+                };
+
+                // Attach event listeners for local mode
+                openModalBtn.addEventListener('click', () => {
+                    modal.classList.remove('hidden');
+                });
+                addNameBtn.addEventListener('click', localAddMultipleNames);
+                closeModalBtn.addEventListener('click', () => {
+                    modal.classList.add('hidden');
+                });
+                drawBtn.addEventListener('click', localDrawName);
+                resetBtn.addEventListener('click', localResetApp);
+                nameList.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('remove-btn')) {
+                        localRemoveName(e.target.dataset.name);
+                    }
+                });
+
+                classButtonsContainer.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('class-button')) {
+                        currentClass = e.target.dataset.class;
+                        updateActiveClass(e.target);
+                        students = getLocalStudents(currentClass);
+                        renderNames();
+                        checkDrawButtonState();
+                    }
+                });
+                
+                // Initial load from local storage
+                students = getLocalStudents(currentClass);
+                updateActiveClass(document.querySelector('.class-button[data-class="1반"]'));
+                renderNames();
+                checkDrawButtonState();
+            }
+
+            // UI Functions (used by both modes)
+            const renderNames = () => {
+                nameList.innerHTML = '';
+                drawnList.innerHTML = '';
+
+                const unselectedStudents = students.filter(student => !student.selected);
+                const selectedStudents = students.filter(student => student.selected);
+
+                // Render unselected students
+                unselectedStudents.forEach(student => {
+                    const tag = document.createElement('div');
+                    tag.className = `name-tag`;
+                    tag.innerHTML = `
+                        <span>${student.name}</span>
+                        <button class="remove-btn" data-name="${student.name}">&times;</button>
+                    `;
+                    nameList.appendChild(tag);
+                });
+
+                // Render selected students
+                selectedStudents.forEach(student => {
+                    const tag = document.createElement('div');
+                    tag.className = `name-tag selected-tag`;
+                    tag.innerHTML = `
+                        <span>${student.name}</span>
+                    `;
+                    drawnList.appendChild(tag);
+                });
+            };
+
+            const checkDrawButtonState = () => {
+                const unselectedStudents = students.filter(student => !student.selected);
+                drawBtn.disabled = unselectedStudents.length === 0;
+                if (drawBtn.disabled) {
+                    drawBtn.classList.remove('draw-button');
+                    drawBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
+                } else {
+                    drawBtn.classList.add('draw-button');
+                    drawBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+                }
+            };
+            
+            const updateActiveClass = (activeButton) => {
+                const buttons = document.querySelectorAll('.class-button');
+                buttons.forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                if (activeButton) {
+                    activeButton.classList.add('active');
+                }
+            };
+
+            // --- Determine and initialize mode ---
+            // If running as a local file, force local mode immediately.
+            if (window.location.protocol === 'file:') {
+                initializeLocalMode();
+            } else {
+                // Otherwise, try to initialize Firebase first.
+                try {
+                    if (Object.keys(firebaseConfig).length > 0) {
+                        app = firebase.initializeApp(firebaseConfig);
+                        auth = app.auth();
+                        db = app.firestore();
+                        db.enablePersistence().catch((err) => {
+                            if (err.code == 'failed-precondition') {
+                                console.log('Multiple tabs open, persistence not enabled.');
+                            } else {
+                                console.log('Persistence failed: ' + err);
+                            }
+                        });
+
+                        // Set up event listeners for Firebase mode
+                        openModalBtn.addEventListener('click', () => {
+                            modal.classList.remove('hidden');
+                        });
+                        addNameBtn.addEventListener('click', addMultipleNames);
+                        closeModalBtn.addEventListener('click', () => {
+                            modal.classList.add('hidden');
+                        });
+                        drawBtn.addEventListener('click', drawName);
+                        resetBtn.addEventListener('click', resetApp);
+                        nameList.addEventListener('click', (e) => {
+                            if (e.target.classList.contains('remove-btn')) {
+                                removeName(e.target.dataset.name);
+                            }
+                        });
+
+                        classButtonsContainer.addEventListener('click', (e) => {
+                            if (e.target.classList.contains('class-button')) {
+                                currentClass = e.target.dataset.class;
+                                updateActiveClass(e.target);
+                                fetchFirebaseStudents();
+                            }
+                        });
+
+                        if (initialAuthToken) {
+                            await auth.signInWithCustomToken(initialAuthToken);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                        
+                        auth.onAuthStateChanged((user) => {
+                            if (user) {
+                                userId = user.uid;
+                                fetchFirebaseStudents();
+                            } else {
+                                console.log("No user is signed in.");
+                                initializeLocalMode();
+                            }
+                        });
+                    } else {
+                        console.error("Firebase config is not available. Using local storage.");
+                        initializeLocalMode();
+                    }
+                } catch (e) {
+                    console.error("Error initializing Firebase:", e);
+                    initializeLocalMode();
+                }
+            }
+        });
+    </script>
+    <style>
+        body {
+            font-family: 'Jua', sans-serif;
+            background-color: #fce4ec; /* Soft pink */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            background-color: #fff8f9;
+            border-radius: 2rem;
+            box-shadow: 0 12px 20px -5px rgba(255, 105, 135, 0.2), 0 5px 10px -2px rgba(255, 105, 135, 0.1);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 500px;
+        }
+        .title {
+            font-weight: 700;
+        }
+        .rainbow-text {
+            background-image: linear-gradient(to right, #ef5350, #fbc02d, #66bb6a, #42a5f5, #5e35b1, #ec407a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-fill-color: transparent;
+        }
+        .subtitle {
+            color: #ef5350; /* Light red */
+        }
+        .input-group {
+            margin-top: 1.5rem;
+        }
+        .input-field {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 1.5rem;
+            border: 2px solid #ffab91; /* Light orange */
+            outline: none;
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 4px 6px -1px rgba(255, 171, 145, 0.3);
+            resize: vertical;
+        }
+        .input-field:focus {
+            border-color: #ff8a65; /* Brighter orange */
+            box-shadow: 0 0 0 4px rgba(255, 138, 101, 0.3);
+        }
+        .button {
+            width: 100%;
+            padding: 1rem;
+            border-radius: 1.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            margin-top: 1rem;
+            box-shadow: 0 5px #b0bec5; /* Blue-grey shadow */
+            transform: translateY(0);
+        }
+        .button:active {
+            box-shadow: 0 2px #b0bec5;
+            transform: translateY(3px);
+        }
+        .add-button {
+            background-color: #66bb6a; /* Green */
+            color: #ffffff;
+        }
+        .add-button:hover {
+            background-color: #43a047;
+        }
+        .draw-button {
+            background-color: #b39ddb; /* Pastel purple */
+            color: #ffffff;
+        }
+        .draw-button:hover {
+            background-color: #9575cd;
+        }
+        .draw-button:active {
+            box-shadow: 0 2px #9575cd;
+        }
+        .reset-button {
+            background-color: #ef5350; /* Red */
+            color: #ffffff;
+        }
+        .reset-button:hover {
+            background-color: #e53935;
+        }
+        .name-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            min-height: 2rem;
+        }
+        .name-tag {
+            background-color: #ffccbc; /* Light peach */
+            color: #e57373; /* Coral */
+            padding: 0.5rem 1.25rem;
+            border-radius: 2rem;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            font-weight: 600;
+            box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.1);
+        }
+        .name-tag button {
+            margin-left: 0.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #ff8a65;
+            font-size: 1rem;
+        }
+        .result-container {
+            margin-top: 2rem;
+            text-align: center;
+            min-height: 5rem;
+            animation: bounceIn 1s ease-in-out;
+        }
+        .result-text {
+            color: #d81b60;
+            font-size: 3rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .error-message {
+            color: #d81b60;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+        .hidden {
+            display: none;
+        }
+        /* Custom styles for disabled state */
+        .cursor-not-allowed {
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: translateY(0);
+        }
+        /* Cute animations */
+        @keyframes bounceIn {
+            0% { transform: scale(0.3); opacity: 0; }
+            50% { transform: scale(1.1); opacity: 1; }
+            80% { transform: scale(0.9); }
+            100% { transform: scale(1); }
+        }
+        .selected-tag {
+            background-color: #b0bec5; /* Light blue-grey */
+            color: #455a64; /* Dark blue-grey */
+            box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.1);
+        }
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: #fff8f9;
+            padding: 2rem;
+            border-radius: 1.5rem;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        .modal-close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #d81b60;
+        }
+        .class-button-group {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .class-button {
+            font-family: 'Jua', sans-serif;
+            border: 2px solid #ffab91;
+            border-radius: 1.5rem;
+            padding: 0.5rem 1rem;
+            background-color: #fff8f9;
+            color: #d81b60;
+            box-shadow: 0 4px 6px -1px rgba(255, 171, 145, 0.3);
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease-in-out;
+        }
+        .class-button.active {
+            background-color: #ffab91;
+            color: #fff;
+            box-shadow: 0 2px 4px -1px rgba(255, 171, 145, 0.6);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div class="container mx-auto">
+        <h1 class="title text-3xl text-center rainbow-text">🎲 랜덤 이름 뽑기</h1>
+        
+
+        <div id="classButtonsContainer" class="class-button-group mt-6">
+            <button class="class-button active" data-class="1반">1반</button>
+            <button class="class-button" data-class="2반">2반</button>
+            <button class="class-button" data-class="3반">3반</button>
+            <button class="class-button" data-class="4반">4반</button>
+            <button class="class-button" data-class="5반">5반</button>
+            <button class="class-button" data-class="6반">6반</button>
+        </div>
+
+        <div class="mt-6">
+            <button id="openModalBtn" class="button add-button">이름 추가</button>
+        </div>
+        
+        <div class="mt-6">
+            <h2 class="text-xl font-bold text-gray-700">추첨 대기 학생</h2>
+            <div class="name-list mt-2" id="nameList">
+                <!-- 추첨 대기 학생 이름 태그가 여기에 추가됩니다 -->
+            </div>
+        </div>
+
+        <div class="result-container mt-8">
+            <div id="resultBox" class="bg-indigo-100 text-indigo-800 rounded-xl p-6">
+                <p id="resultText" class="result-text">?</p>
+            </div>
+            <p id="errorMessage" class="error-message hidden">모든 학생이 추첨되었습니다. 초기화해주세요.</p>
+        </div>
+
+        <div class="mt-6">
+            <h2 class="text-xl font-bold text-gray-700">추첨된 학생</h2>
+            <div class="name-list mt-2" id="drawnList">
+                <!-- 추첨된 학생 이름 태그가 여기에 추가됩니다 -->
+            </div>
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-4 mt-6">
+            <button id="drawBtn" class="button draw-button">추첨하기</button>
+            <button id="resetBtn" class="button reset-button">초기화</button>
+        </div>
+
+    </div>
+
+    <!-- The Modal -->
+    <div id="addNameModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span id="closeModalBtn" class="modal-close-btn">&times;</span>
+            <h2 class="title text-2xl mb-4">이름 추가하기</h2>
+            <p class="subtitle mb-2">쉼표(,)로 구분하여 여러 이름을 입력하세요.</p>
+            <textarea id="multiNameTextarea" class="input-field" rows="5" placeholder="예) 김철수, 박영희, 이민지"></textarea>
+            <button id="addNameBtn" class="button add-button">추가</button>
+        </div>
+    </div>
+</body>
+</html>
