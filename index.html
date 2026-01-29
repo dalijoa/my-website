@@ -3,636 +3,795 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎲 랜덤 이름 뽑기</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>랜덤 발표 뽑기</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Jua&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <!-- Firebase SDK Scripts (v8 for local file compatibility) -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-
-    <script>
-        // Global variables provided by the Canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let app, db, auth, userId;
-        let studentsDocRef;
-        let students = []; // Local state of students
-        let audioContext;
-        let currentClass = '1반'; // Default class
-
-        const playDrawSound = () => {
-            // Check for AudioContext support
-            if (typeof (window.AudioContext || window.webkitAudioContext) === 'undefined') {
-                console.warn('Web Audio API is not supported.');
-                return;
-            }
-
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-
-            const gainNode = audioContext.createGain();
-            gainNode.connect(audioContext.destination);
-
-            const playNote = (frequency, duration, delay) => {
-                setTimeout(() => {
-                    const oscillator = audioContext.createOscillator();
-                    oscillator.type = 'sine';
-                    oscillator.frequency.value = frequency;
-
-                    gainNode.gain.setValueAtTime(gainNode.gain.value, audioContext.currentTime);
-                    gainNode.gain.exponentialRampToValueAtTime(1, audioContext.currentTime + 0.01);
-                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
-
-                    oscillator.connect(gainNode);
-                    oscillator.start();
-                    setTimeout(() => oscillator.stop(), duration * 1000);
-                }, delay * 1000);
-            };
-
-            // Play a short, ascending arpeggio for a celebratory sound
-            playNote(523.25, 0.1, 0); // C5
-            playNote(659.25, 0.1, 0.15); // E5
-            playNote(783.99, 0.2, 0.3); // G5
-        };
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Set up UI elements
-            const openModalBtn = document.getElementById('openModalBtn');
-            const addNameBtn = document.getElementById('addNameBtn');
-            const closeModalBtn = document.getElementById('closeModalBtn');
-            const modal = document.getElementById('addNameModal');
-            const multiNameTextarea = document.getElementById('multiNameTextarea');
-            const drawBtn = document.getElementById('drawBtn');
-            const resetBtn = document.getElementById('resetBtn');
-            const nameList = document.getElementById('nameList');
-            const drawnList = document.getElementById('drawnList');
-            const resultText = document.getElementById('resultText');
-            const errorMessage = document.getElementById('errorMessage');
-            const classButtonsContainer = document.getElementById('classButtonsContainer');
-
-            // --- Function declarations (moved to the top to prevent ReferenceError) ---
-            const fetchFirebaseStudents = () => {
-                studentsDocRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('presenter_app_data').doc(currentClass);
-                studentsDocRef.onSnapshot((doc) => {
-                    const data = doc.data();
-                    if (data && data.list) {
-                        students = data.list;
-                    } else {
-                        students = [];
-                    }
-                    renderNames();
-                    checkDrawButtonState();
-                }, (error) => {
-                    console.error("Failed to listen to Firestore document:", error);
-                });
-            };
-
-            const addMultipleNames = async () => {
-                const namesString = multiNameTextarea.value.trim();
-                 if (!namesString) {
-                     alert('이름을 입력해주세요.');
-                     return;
-                 }
-                if (!auth.currentUser) return;
-                const names = namesString.split(',').map(name => name.trim()).filter(name => name.length > 0);
-                if (names.length === 0) return;
-                const newStudents = names.map(name => ({ name: name, selected: false }));
-                try {
-                    const docSnap = await studentsDocRef.get();
-                    if (docSnap.exists) {
-                        await studentsDocRef.update({ list: firebase.firestore.FieldValue.arrayUnion(...newStudents) });
-                    } else {
-                        await studentsDocRef.set({ list: newStudents });
-                    }
-                    multiNameTextarea.value = '';
-                    modal.classList.add('hidden'); // Close modal
-                } catch (e) { console.error("Error adding students:", e); }
-            };
-
-            const removeName = async (nameToRemove) => {
-                if (!auth.currentUser) return;
-                try {
-                    const studentToRemove = students.find(s => s.name === nameToRemove);
-                    if (studentToRemove) { await studentsDocRef.update({ list: firebase.firestore.FieldValue.arrayRemove(studentToRemove) }); }
-                } catch (e) { console.error("Error removing student:", e); }
-            };
-
-            const drawName = async () => {
-                const unselectedStudents = students.filter(student => !student.selected);
-                if (unselectedStudents.length < 1) { errorMessage.style.display = 'block'; return; }
-                errorMessage.style.display = 'none';
-                playDrawSound();
-                const finalIndex = Math.floor(Math.random() * unselectedStudents.length);
-                const finalName = unselectedStudents[finalIndex].name;
-                resultText.innerHTML = `<span class="confetti-left">🎉</span> ${finalName} <span class="confetti-right">🎉</span>`;
-                const updatedStudents = students.map(student => student.name === finalName ? { ...student, selected: true } : student);
-                try { studentsDocRef.set({ list: updatedStudents }); } catch (e) { console.error("Error updating selected student:", e); }
-            };
-
-            const resetApp = async () => {
-                if (!auth.currentUser) return;
-                try {
-                    const updatedStudents = students.map(student => ({ ...student, selected: false }));
-                    await studentsDocRef.set({ list: updatedStudents });
-                    resultText.innerHTML = '?';
-                    errorMessage.style.display = 'none';
-                } catch (e) { console.error("Error resetting app:", e); }
-            };
-            
-            // Fallback to local mode if Firebase fails or is not supported
-            function initializeLocalMode() {
-                console.log("Initializing in local mode. Data will persist on refresh.");
-                
-                const LOCAL_STORAGE_KEY_PREFIX = 'presenter_app_students_';
-
-                const getLocalStudents = (classId) => {
-                    const data = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + classId);
-                    return data ? JSON.parse(data) : [];
-                };
-
-                const saveLocalStudents = (classId, newStudents) => {
-                    localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + classId, JSON.stringify(newStudents));
-                    students = newStudents;
-                    renderNames();
-                    checkDrawButtonState();
-                };
-
-                const localAddMultipleNames = () => {
-                    const namesString = multiNameTextarea.value.trim();
-                    if (!namesString) {
-                         alert('이름을 입력해주세요.');
-                         return;
-                    }
-                    const names = namesString.split(',').map(name => name.trim()).filter(name => name.length > 0);
-                    if (names.length === 0) return;
-
-                    const newStudents = names.map(name => ({ name: name, selected: false }));
-                    const currentStudents = getLocalStudents(currentClass);
-                    
-                    const combinedList = [...currentStudents, ...newStudents];
-                    saveLocalStudents(currentClass, combinedList);
-                    multiNameTextarea.value = '';
-                    modal.classList.add('hidden'); // Close modal
-                };
-
-                const localRemoveName = (nameToRemove) => {
-                    const currentStudents = getLocalStudents(currentClass);
-                    const updatedStudents = currentStudents.filter(s => s.name !== nameToRemove);
-                    saveLocalStudents(currentClass, updatedStudents);
-                };
-
-                const localDrawName = () => {
-                    const unselectedStudents = students.filter(student => !student.selected);
-                    if (unselectedStudents.length < 1) {
-                        errorMessage.style.display = 'block';
-                        return;
-                    }
-                    errorMessage.style.display = 'none';
-                    
-                    playDrawSound();
-                    
-                    const finalIndex = Math.floor(Math.random() * unselectedStudents.length);
-                    const finalName = unselectedStudents[finalIndex].name;
-                    resultText.innerHTML = `<span class="confetti-left">🎉</span> ${finalName} <span class="confetti-right">🎉</span>`;
-                    
-                    const updatedStudents = students.map(student => 
-                        student.name === finalName ? { ...student, selected: true } : student
-                    );
-                    saveLocalStudents(currentClass, updatedStudents);
-                };
-
-                const localResetApp = () => {
-                    const updatedStudents = students.map(student => ({
-                        ...student,
-                        selected: false
-                    }));
-                    saveLocalStudents(currentClass, updatedStudents);
-                    resultText.innerHTML = '?';
-                    errorMessage.style.display = 'none';
-                };
-
-                // Attach event listeners for local mode
-                openModalBtn.addEventListener('click', () => {
-                    modal.classList.remove('hidden');
-                });
-                addNameBtn.addEventListener('click', localAddMultipleNames);
-                closeModalBtn.addEventListener('click', () => {
-                    modal.classList.add('hidden');
-                });
-                drawBtn.addEventListener('click', localDrawName);
-                resetBtn.addEventListener('click', localResetApp);
-                nameList.addEventListener('click', (e) => {
-                    if (e.target.classList.contains('remove-btn')) {
-                        localRemoveName(e.target.dataset.name);
-                    }
-                });
-
-                classButtonsContainer.addEventListener('click', (e) => {
-                    if (e.target.classList.contains('class-button')) {
-                        currentClass = e.target.dataset.class;
-                        updateActiveClass(e.target);
-                        students = getLocalStudents(currentClass);
-                        renderNames();
-                        checkDrawButtonState();
-                    }
-                });
-                
-                // Initial load from local storage
-                students = getLocalStudents(currentClass);
-                updateActiveClass(document.querySelector('.class-button[data-class="1반"]'));
-                renderNames();
-                checkDrawButtonState();
-            }
-
-            // UI Functions (used by both modes)
-            const renderNames = () => {
-                nameList.innerHTML = '';
-                drawnList.innerHTML = '';
-
-                const unselectedStudents = students.filter(student => !student.selected);
-                const selectedStudents = students.filter(student => student.selected);
-
-                // Render unselected students
-                unselectedStudents.forEach(student => {
-                    const tag = document.createElement('div');
-                    tag.className = `name-tag`;
-                    tag.innerHTML = `
-                        <span>${student.name}</span>
-                        <button class="remove-btn" data-name="${student.name}">&times;</button>
-                    `;
-                    nameList.appendChild(tag);
-                });
-
-                // Render selected students
-                selectedStudents.forEach(student => {
-                    const tag = document.createElement('div');
-                    tag.className = `name-tag selected-tag`;
-                    tag.innerHTML = `
-                        <span>${student.name}</span>
-                    `;
-                    drawnList.appendChild(tag);
-                });
-            };
-
-            const checkDrawButtonState = () => {
-                const unselectedStudents = students.filter(student => !student.selected);
-                drawBtn.disabled = unselectedStudents.length === 0;
-                if (drawBtn.disabled) {
-                    drawBtn.classList.remove('draw-button');
-                    drawBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
-                } else {
-                    drawBtn.classList.add('draw-button');
-                    drawBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
-                }
-            };
-            
-            const updateActiveClass = (activeButton) => {
-                const buttons = document.querySelectorAll('.class-button');
-                buttons.forEach(btn => {
-                    btn.classList.remove('active');
-                });
-                if (activeButton) {
-                    activeButton.classList.add('active');
-                }
-            };
-
-            // --- Determine and initialize mode ---
-            // If running as a local file, force local mode immediately.
-            if (window.location.protocol === 'file:') {
-                initializeLocalMode();
-            } else {
-                // Otherwise, try to initialize Firebase first.
-                try {
-                    if (Object.keys(firebaseConfig).length > 0) {
-                        app = firebase.initializeApp(firebaseConfig);
-                        auth = app.auth();
-                        db = app.firestore();
-                        db.enablePersistence().catch((err) => {
-                            if (err.code == 'failed-precondition') {
-                                console.log('Multiple tabs open, persistence not enabled.');
-                            } else {
-                                console.log('Persistence failed: ' + err);
-                            }
-                        });
-
-                        // Set up event listeners for Firebase mode
-                        openModalBtn.addEventListener('click', () => {
-                            modal.classList.remove('hidden');
-                        });
-                        addNameBtn.addEventListener('click', addMultipleNames);
-                        closeModalBtn.addEventListener('click', () => {
-                            modal.classList.add('hidden');
-                        });
-                        drawBtn.addEventListener('click', drawName);
-                        resetBtn.addEventListener('click', resetApp);
-                        nameList.addEventListener('click', (e) => {
-                            if (e.target.classList.contains('remove-btn')) {
-                                removeName(e.target.dataset.name);
-                            }
-                        });
-
-                        classButtonsContainer.addEventListener('click', (e) => {
-                            if (e.target.classList.contains('class-button')) {
-                                currentClass = e.target.dataset.class;
-                                updateActiveClass(e.target);
-                                fetchFirebaseStudents();
-                            }
-                        });
-
-                        if (initialAuthToken) {
-                            await auth.signInWithCustomToken(initialAuthToken);
-                        } else {
-                            await auth.signInAnonymously();
-                        }
-                        
-                        auth.onAuthStateChanged((user) => {
-                            if (user) {
-                                userId = user.uid;
-                                fetchFirebaseStudents();
-                            } else {
-                                console.log("No user is signed in.");
-                                initializeLocalMode();
-                            }
-                        });
-                    } else {
-                        console.error("Firebase config is not available. Using local storage.");
-                        initializeLocalMode();
-                    }
-                } catch (e) {
-                    console.error("Error initializing Firebase:", e);
-                    initializeLocalMode();
-                }
-            }
-        });
-    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Gaegu&display=swap" rel="stylesheet">
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: 'Jua', sans-serif;
-            background-color: #fce4ec; /* Soft pink */
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            font-family: 'Gaegu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            padding: 1rem;
+            padding: 20px;
         }
+
         .container {
-            background-color: #fff8f9;
-            border-radius: 2rem;
-            box-shadow: 0 12px 20px -5px rgba(255, 105, 135, 0.2), 0 5px 10px -2px rgba(255, 105, 135, 0.1);
-            padding: 2.5rem;
-            width: 100%;
-            max-width: 500px;
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
         }
-        .title {
-            font-weight: 700;
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
         }
-        .rainbow-text {
-            background-image: linear-gradient(to right, #ef5350, #fbc02d, #66bb6a, #42a5f5, #5e35b1, #ec407a);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            text-fill-color: transparent;
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
         }
-        .subtitle {
-            color: #ef5350; /* Light red */
+
+        .content {
+            padding: 30px;
         }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
         .input-group {
-            margin-top: 1.5rem;
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
         }
-        .input-field {
-            width: 100%;
-            padding: 0.75rem;
-            border-radius: 1.5rem;
-            border: 2px solid #ffab91; /* Light orange */
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
             outline: none;
-            transition: all 0.2s ease-in-out;
-            box-shadow: 0 4px 6px -1px rgba(255, 171, 145, 0.3);
-            resize: vertical;
+            border-color: #667eea;
         }
-        .input-field:focus {
-            border-color: #ff8a65; /* Brighter orange */
-            box-shadow: 0 0 0 4px rgba(255, 138, 101, 0.3);
-        }
-        .button {
-            width: 100%;
-            padding: 1rem;
-            border-radius: 1.5rem;
-            font-weight: 600;
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
             cursor: pointer;
-            transition: all 0.2s ease-in-out;
-            margin-top: 1rem;
-            box-shadow: 0 5px #b0bec5; /* Blue-grey shadow */
-            transform: translateY(0);
+            transition: all 0.3s;
+            font-weight: bold;
         }
-        .button:active {
-            box-shadow: 0 2px #b0bec5;
-            transform: translateY(3px);
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
         }
-        .add-button {
-            background-color: #66bb6a; /* Green */
-            color: #ffffff;
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
-        .add-button:hover {
-            background-color: #43a047;
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
         }
-        .draw-button {
-            background-color: #b39ddb; /* Pastel purple */
-            color: #ffffff;
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
         }
-        .draw-button:hover {
-            background-color: #9575cd;
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
         }
-        .draw-button:active {
-            box-shadow: 0 2px #9575cd;
+
+        .btn-danger:hover {
+            background: #dc2626;
         }
-        .reset-button {
-            background-color: #ef5350; /* Red */
-            color: #ffffff;
-        }
-        .reset-button:hover {
-            background-color: #e53935;
-        }
-        .name-list {
+
+        .student-list {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.75rem;
-            min-height: 2rem;
+            gap: 10px;
+            min-height: 50px;
         }
-        .name-tag {
-            background-color: #ffccbc; /* Light peach */
-            color: #e57373; /* Coral */
-            padding: 0.5rem 1.25rem;
-            border-radius: 2rem;
-            font-size: 0.875rem;
-            display: flex;
+
+        .student-tag {
+            background: #dbeafe;
+            padding: 8px 15px;
+            border-radius: 20px;
+            display: inline-flex;
             align-items: center;
-            font-weight: 600;
-            box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.1);
+            gap: 8px;
+            border: 2px solid #3b82f6;
         }
-        .name-tag button {
-            margin-left: 0.5rem;
+
+        .student-tag.presented {
+            background: #dcfce7;
+            border: 2px solid #22c55e;
+        }
+
+        .list-container {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .list-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: #374151;
+        }
+
+        .waiting-title {
+            color: #3b82f6;
+        }
+
+        .presented-title {
+            color: #22c55e;
+        }
+
+        .remove-btn {
             background: none;
+            color: #ef4444;
             border: none;
             cursor: pointer;
-            color: #ff8a65;
-            font-size: 1rem;
-        }
-        .result-container {
-            margin-top: 2rem;
-            text-align: center;
-            min-height: 5rem;
-            animation: bounceIn 1s ease-in-out;
-        }
-        .result-text {
-            color: #d81b60;
-            font-size: 3rem;
-            font-weight: 700;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0;
+            width: auto;
+            height: auto;
             line-height: 1;
+            transition: color 0.2s;
         }
-        .error-message {
-            color: #d81b60;
-            font-size: 0.875rem;
-            margin-top: 0.5rem;
+
+        .remove-btn:hover {
+            color: #dc2626;
         }
-        .hidden {
-            display: none;
+
+        .picker-area {
+            text-align: center;
+            padding: 40px;
+            background: #f9fafb;
+            border-radius: 12px;
+            margin: 20px 0;
         }
-        /* Custom styles for disabled state */
-        .cursor-not-allowed {
-            cursor: not-allowed;
-            box-shadow: none;
-            transform: translateY(0);
-        }
-        /* Cute animations */
-        @keyframes bounceIn {
-            0% { transform: scale(0.3); opacity: 0; }
-            50% { transform: scale(1.1); opacity: 1; }
-            80% { transform: scale(0.9); }
-            100% { transform: scale(1); }
-        }
-        .selected-tag {
-            background-color: #b0bec5; /* Light blue-grey */
-            color: #455a64; /* Dark blue-grey */
-            box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.1);
-        }
-        /* Modal Styles */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
+
+        .result-display {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            min-height: 80px;
             display: flex;
-            justify-content: center;
             align-items: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background-color: #fff8f9;
-            padding: 2rem;
-            border-radius: 1.5rem;
-            width: 90%;
-            max-width: 400px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            position: relative;
-        }
-        .modal-close-btn {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #d81b60;
-        }
-        .class-button-group {
-            display: flex;
-            flex-wrap: wrap;
             justify-content: center;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
+            margin: 20px 0;
+            animation: fadeIn 0.5s;
         }
-        .class-button {
-            font-family: 'Jua', sans-serif;
-            border: 2px solid #ffab91;
-            border-radius: 1.5rem;
-            padding: 0.5rem 1rem;
-            background-color: #fff8f9;
-            color: #d81b60;
-            box-shadow: 0 4px 6px -1px rgba(255, 171, 145, 0.3);
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.8); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .pick-button {
+            font-size: 1.5em;
+            padding: 20px 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
             cursor: pointer;
-            outline: none;
-            transition: all 0.2s ease-in-out;
+            transition: all 0.3s;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
         }
-        .class-button.active {
-            background-color: #ffab91;
-            color: #fff;
-            box-shadow: 0 2px 4px -1px rgba(255, 171, 145, 0.6);
+
+        .pick-button:hover:not(:disabled) {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+
+        .pick-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .history-section {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        .history-list {
+            list-style: none;
+        }
+
+        .history-item {
+            padding: 12px;
+            background: white;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-box {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .class-manager {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .class-tabs {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .class-tab {
+            padding: 10px 20px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .class-tab:hover {
+            border-color: #667eea;
+        }
+
+        .class-tab.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .add-class-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .current-class-name {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 15px;
         }
     </style>
 </head>
-<body class="bg-gray-100">
-
-    <div class="container mx-auto">
-        <h1 class="title text-3xl text-center rainbow-text">🎲 랜덤 이름 뽑기</h1>
-        
-
-        <div id="classButtonsContainer" class="class-button-group mt-6">
-            <button class="class-button active" data-class="1반">1반</button>
-            <button class="class-button" data-class="2반">2반</button>
-            <button class="class-button" data-class="3반">3반</button>
-            <button class="class-button" data-class="4반">4반</button>
-            <button class="class-button" data-class="5반">5반</button>
-            <button class="class-button" data-class="6반">6반</button>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍎 랜덤 발표 뽑기</h1>
+            <p>누가누가 발표할까?</p>
         </div>
 
-        <div class="mt-6">
-            <button id="openModalBtn" class="button add-button">이름 추가</button>
-        </div>
-        
-        <div class="mt-6">
-            <h2 class="text-xl font-bold text-gray-700">추첨 대기 학생</h2>
-            <div class="name-list mt-2" id="nameList">
-                <!-- 추첨 대기 학생 이름 태그가 여기에 추가됩니다 -->
+        <div class="content">
+            <!-- 반 관리 섹션 -->
+            <div class="section">
+                <h2>🏫 반 관리</h2>
+                <div class="class-manager">
+                    <div class="class-tabs" id="classTabs"></div>
+                    <div class="add-class-section">
+                        <input type="text" id="classNameInput" placeholder="새 반 이름 (예: 1반, 2-1반)" style="flex: 1;">
+                        <button class="btn-primary" onclick="addClass()">반 추가</button>
+                    </div>
+                    <p style="color: #9ca3af; font-size: 0.85em; margin-top: 10px;">💡 반을 우클릭하면 삭제할 수 있습니다</p>
+                </div>
+                <div class="current-class-name" id="currentClassName"></div>
+            </div>
+
+            <!-- 뽑기 영역 -->
+            <div class="picker-area">
+                <div class="result-display" id="resultDisplay">?</div>
+                <button class="pick-button" id="pickButton" onclick="pickStudent()">
+                    🎲 발표자 뽑기
+                </button>
+            </div>
+
+            <!-- 뽑기 설정 -->
+            <div class="section">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="preventDuplicate" checked>
+                    <label for="preventDuplicate">중복 방지 (발표한 학생 제외)</label>
+                </div>
+            </div>
+
+            <!-- 통계 -->
+            <div class="section">
+                <div class="stats">
+                    <div class="stat-box">
+                        <div class="stat-value" id="totalStudents">0</div>
+                        <div class="stat-label">전체 학생</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="presentedCount">0</div>
+                        <div class="stat-label">발표 완료</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="remainingCount">0</div>
+                        <div class="stat-label">남은 학생</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 학생 목록 섹션 -->
+            <div class="section">
+                <h2>👥 학생 목록</h2>
+                <div class="list-container">
+                    <div class="list-title waiting-title">⏳ 추첨 대기 학생</div>
+                    <div class="student-list" id="waitingList"></div>
+                </div>
+                
+                <div class="list-container">
+                    <div class="list-title presented-title">✅ 추첨된 학생</div>
+                    <div class="student-list" id="presentedList"></div>
+                </div>
+            </div>
+
+            <!-- 학생 추가 섹션 -->
+            <div class="section">
+                <h2>📝 학생 명단 관리</h2>
+                <div class="input-group">
+                    <input type="text" id="studentInput" placeholder="학생 이름을 입력하세요 (쉼표로 구분하여 여러 명 입력 가능)" onkeypress="handleKeyPress(event)">
+                    <button class="btn-primary" onclick="addStudent()">추가</button>
+                    <button class="btn-secondary" onclick="clearAll()">전체 삭제</button>
+                </div>
+            </div>
+
+            <!-- 발표 이력 -->
+            <div class="section">
+                <h2>📊 발표 이력</h2>
+                <div class="history-section">
+                    <button class="btn-danger" onclick="clearHistory()" style="margin-bottom: 15px;">이력 초기화</button>
+                    <ul class="history-list" id="historyList"></ul>
+                </div>
             </div>
         </div>
-
-        <div class="result-container mt-8">
-            <div id="resultBox" class="bg-indigo-100 text-indigo-800 rounded-xl p-6">
-                <p id="resultText" class="result-text">?</p>
-            </div>
-            <p id="errorMessage" class="error-message hidden">모든 학생이 추첨되었습니다. 초기화해주세요.</p>
-        </div>
-
-        <div class="mt-6">
-            <h2 class="text-xl font-bold text-gray-700">추첨된 학생</h2>
-            <div class="name-list mt-2" id="drawnList">
-                <!-- 추첨된 학생 이름 태그가 여기에 추가됩니다 -->
-            </div>
-        </div>
-
-        <div class="flex flex-col md:flex-row gap-4 mt-6">
-            <button id="drawBtn" class="button draw-button">추첨하기</button>
-            <button id="resetBtn" class="button reset-button">초기화</button>
-        </div>
-
     </div>
 
-    <!-- The Modal -->
-    <div id="addNameModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <span id="closeModalBtn" class="modal-close-btn">&times;</span>
-            <h2 class="title text-2xl mb-4">이름 추가하기</h2>
-            <p class="subtitle mb-2">쉼표(,)로 구분하여 여러 이름을 입력하세요.</p>
-            <textarea id="multiNameTextarea" class="input-field" rows="5" placeholder="예) 김철수, 박영희, 이민지"></textarea>
-            <button id="addNameBtn" class="button add-button">추가</button>
-        </div>
-    </div>
+    <script>
+        let classes = {}; // 반별 데이터 저장
+        let currentClass = null; // 현재 선택된 반
+
+        // 현재 반의 데이터 가져오기
+        function getCurrentClassData() {
+            if (!currentClass || !classes[currentClass]) {
+                return {
+                    students: [],
+                    presentedStudents: new Set(),
+                    history: []
+                };
+            }
+            return classes[currentClass];
+        }
+
+        // 로컬 스토리지에서 데이터 불러오기
+        function loadData() {
+            const saved = localStorage.getItem('studentPickerData');
+            if (saved) {
+                const data = JSON.parse(saved);
+                classes = data.classes || {};
+                currentClass = data.currentClass || null;
+
+                // Set 객체 복원
+                Object.keys(classes).forEach(className => {
+                    classes[className].presentedStudents = new Set(classes[className].presentedStudents || []);
+                });
+
+                // 기본 반이 없으면 생성
+                if (Object.keys(classes).length === 0) {
+                    classes['1반'] = {
+                        students: [],
+                        presentedStudents: new Set(),
+                        history: []
+                    };
+                    currentClass = '1반';
+                }
+
+                updateClassTabs();
+                updateDisplay();
+                updateHistory();
+            } else {
+                // 최초 실행시 기본 반 생성
+                classes['1반'] = {
+                    students: [],
+                    presentedStudents: new Set(),
+                    history: []
+                };
+                currentClass = '1반';
+                updateClassTabs();
+                updateDisplay();
+            }
+        }
+
+        // 로컬 스토리지에 데이터 저장
+        function saveData() {
+            const data = {
+                classes: {},
+                currentClass: currentClass
+            };
+
+            // Set 객체를 배열로 변환하여 저장
+            Object.keys(classes).forEach(className => {
+                data.classes[className] = {
+                    students: classes[className].students,
+                    presentedStudents: Array.from(classes[className].presentedStudents),
+                    history: classes[className].history
+                };
+            });
+
+            localStorage.setItem('studentPickerData', JSON.stringify(data));
+        }
+
+        // 반 탭 업데이트
+        function updateClassTabs() {
+            const tabsDiv = document.getElementById('classTabs');
+            tabsDiv.innerHTML = '';
+
+            Object.keys(classes).forEach(className => {
+                const tab = document.createElement('div');
+                tab.className = 'class-tab';
+                if (className === currentClass) {
+                    tab.classList.add('active');
+                }
+                tab.textContent = className;
+                
+                // 클릭으로 반 전환
+                tab.onclick = () => switchClass(className);
+                
+                // 우클릭으로 삭제 메뉴
+                tab.oncontextmenu = (e) => {
+                    e.preventDefault();
+                    if (confirm(`${className}을(를) 삭제하시겠습니까?\n해당 반의 모든 데이터가 삭제됩니다.`)) {
+                        deleteClass(className);
+                    }
+                };
+
+                tabsDiv.appendChild(tab);
+            });
+
+            // 현재 반 이름 표시
+            document.getElementById('currentClassName').textContent = `📚 ${currentClass}`;
+        }
+
+        // 반 추가
+        function addClass() {
+            const input = document.getElementById('classNameInput');
+            const className = input.value.trim();
+
+            if (className === '') {
+                alert('반 이름을 입력해주세요.');
+                return;
+            }
+
+            if (classes[className]) {
+                alert('이미 존재하는 반 이름입니다.');
+                return;
+            }
+
+            classes[className] = {
+                students: [],
+                presentedStudents: new Set(),
+                history: []
+            };
+
+            currentClass = className;
+            input.value = '';
+
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        // 반 전환
+        function switchClass(className) {
+            currentClass = className;
+            document.getElementById('resultDisplay').textContent = '?'; // 발표자 결과 초기화
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+        }
+
+        // 반 삭제
+        function deleteClass(className) {
+            if (Object.keys(classes).length === 1) {
+                alert('최소 1개의 반은 있어야 합니다.');
+                return;
+            }
+
+            delete classes[className];
+
+            if (currentClass === className) {
+                currentClass = Object.keys(classes)[0];
+            }
+
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                addStudent();
+            }
+        }
+
+        function addStudent() {
+            const input = document.getElementById('studentInput');
+            const inputValue = input.value.trim();
+            
+            if (inputValue === '') {
+                alert('학생 이름을 입력해주세요.');
+                return;
+            }
+            
+            const classData = getCurrentClassData();
+            
+            // 쉼표로 구분하여 여러 이름 처리
+            const names = inputValue.split(',').map(name => name.trim()).filter(name => name !== '');
+            
+            let addedCount = 0;
+            let duplicateCount = 0;
+            
+            names.forEach(name => {
+                if (classData.students.includes(name)) {
+                    duplicateCount++;
+                } else {
+                    classData.students.push(name);
+                    addedCount++;
+                }
+            });
+            
+            input.value = '';
+            updateDisplay();
+            saveData();
+            
+            // 결과 메시지
+            if (addedCount > 0 && duplicateCount > 0) {
+                alert(`${addedCount}명이 추가되었습니다. (중복 ${duplicateCount}명 제외)`);
+            } else if (addedCount > 0) {
+                alert(`${addedCount}명이 추가되었습니다.`);
+            } else if (duplicateCount > 0) {
+                alert('모두 이미 등록된 학생입니다.');
+            }
+        }
+
+        function removeStudent(name) {
+            const classData = getCurrentClassData();
+            classData.students = classData.students.filter(s => s !== name);
+            classData.presentedStudents.delete(name);
+            updateDisplay();
+            saveData();
+        }
+
+        function clearAll() {
+            if (confirm('모든 학생을 삭제하시겠습니까?')) {
+                const classData = getCurrentClassData();
+                classData.students = [];
+                classData.presentedStudents.clear();
+                updateDisplay();
+                saveData();
+            }
+        }
+
+        function updateDisplay() {
+            const classData = getCurrentClassData();
+            const waitingList = document.getElementById('waitingList');
+            const presentedList = document.getElementById('presentedList');
+            
+            waitingList.innerHTML = '';
+            presentedList.innerHTML = '';
+            
+            classData.students.forEach(name => {
+                const tag = document.createElement('div');
+                tag.className = 'student-tag';
+                
+                if (classData.presentedStudents.has(name)) {
+                    tag.classList.add('presented');
+                    tag.innerHTML = `
+                        <span>${name}</span>
+                        <button class="remove-btn" onclick="removeStudent('${name}')">×</button>
+                    `;
+                    presentedList.appendChild(tag);
+                } else {
+                    tag.innerHTML = `
+                        <span>${name}</span>
+                        <button class="remove-btn" onclick="removeStudent('${name}')">×</button>
+                    `;
+                    waitingList.appendChild(tag);
+                }
+            });
+
+            // 빈 상태 메시지
+            if (waitingList.children.length === 0) {
+                waitingList.innerHTML = '<span style="color: #9ca3af;">대기 중인 학생이 없습니다.</span>';
+            }
+            if (presentedList.children.length === 0) {
+                presentedList.innerHTML = '<span style="color: #9ca3af;">추첨된 학생이 없습니다.</span>';
+            }
+
+            // 통계 업데이트
+            document.getElementById('totalStudents').textContent = classData.students.length;
+            document.getElementById('presentedCount').textContent = classData.presentedStudents.size;
+            
+            const preventDuplicate = document.getElementById('preventDuplicate').checked;
+            const remaining = preventDuplicate ? 
+                classData.students.length - classData.presentedStudents.size : 
+                classData.students.length;
+            document.getElementById('remainingCount').textContent = remaining;
+
+            // 뽑기 버튼 활성화/비활성화
+            const pickButton = document.getElementById('pickButton');
+            pickButton.disabled = remaining === 0;
+        }
+
+        function pickStudent() {
+            const classData = getCurrentClassData();
+
+            if (classData.students.length === 0) {
+                alert('학생을 먼저 추가해주세요.');
+                return;
+            }
+
+            const preventDuplicate = document.getElementById('preventDuplicate').checked;
+            let availableStudents = classData.students;
+
+            if (preventDuplicate) {
+                availableStudents = classData.students.filter(s => !classData.presentedStudents.has(s));
+                
+                if (availableStudents.length === 0) {
+                    if (confirm('모든 학생이 발표했습니다. 발표 이력을 초기화하고 다시 시작하시겠습니까?')) {
+                        classData.presentedStudents.clear();
+                        availableStudents = classData.students;
+                        updateDisplay();
+                    } else {
+                        return;
+                    }
+                }
+            }
+
+            // 랜덤 선택
+            const selected = availableStudents[Math.floor(Math.random() * availableStudents.length)];
+            const resultDisplay = document.getElementById('resultDisplay');
+            resultDisplay.textContent = selected;
+            
+            if (preventDuplicate) {
+                classData.presentedStudents.add(selected);
+            }
+            
+            // 이력 추가
+            const now = new Date();
+            classData.history.unshift({
+                name: selected,
+                time: now.toLocaleString('ko-KR')
+            });
+            
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        function updateHistory() {
+            const classData = getCurrentClassData();
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '';
+            
+            if (classData.history.length === 0) {
+                historyList.innerHTML = '<li class="history-item">발표 이력이 없습니다.</li>';
+                return;
+            }
+            
+            classData.history.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.className = 'history-item';
+                li.innerHTML = `
+                    <span><strong>${index + 1}.</strong> ${item.name}</span>
+                    <span style="color: #666; font-size: 0.9em;">${item.time}</span>
+                `;
+                historyList.appendChild(li);
+            });
+        }
+
+        function clearHistory() {
+            const classData = getCurrentClassData();
+            
+            if (confirm('발표 이력을 모두 삭제하시겠습니까?')) {
+                classData.history = [];
+                classData.presentedStudents.clear();
+                updateHistory();
+                updateDisplay();
+                saveData();
+                document.getElementById('resultDisplay').textContent = '?';
+            }
+        }
+
+        // 페이지 로드 시 데이터 불러오기
+        window.onload = function() {
+            loadData();
+        };
+    </script>
 </body>
 </html>
