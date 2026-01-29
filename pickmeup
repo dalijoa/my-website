@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>랜덤 발표 뽑기</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Gaegu&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Gaegu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .student-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            min-height: 50px;
+        }
+
+        .student-tag {
+            background: #dbeafe;
+            padding: 8px 15px;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border: 2px solid #3b82f6;
+        }
+
+        .student-tag.presented {
+            background: #dcfce7;
+            border: 2px solid #22c55e;
+        }
+
+        .list-container {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .list-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: #374151;
+        }
+
+        .waiting-title {
+            color: #3b82f6;
+        }
+
+        .presented-title {
+            color: #22c55e;
+        }
+
+        .remove-btn {
+            background: none;
+            color: #ef4444;
+            border: none;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0;
+            width: auto;
+            height: auto;
+            line-height: 1;
+            transition: color 0.2s;
+        }
+
+        .remove-btn:hover {
+            color: #dc2626;
+        }
+
+        .picker-area {
+            text-align: center;
+            padding: 40px;
+            background: #f9fafb;
+            border-radius: 12px;
+            margin: 20px 0;
+        }
+
+        .result-display {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+            animation: fadeIn 0.5s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.8); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .pick-button {
+            font-size: 1.5em;
+            padding: 20px 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .pick-button:hover:not(:disabled) {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+
+        .pick-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .history-section {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        .history-list {
+            list-style: none;
+        }
+
+        .history-item {
+            padding: 12px;
+            background: white;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-box {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .class-manager {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .class-tabs {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .class-tab {
+            padding: 10px 20px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .class-tab:hover {
+            border-color: #667eea;
+        }
+
+        .class-tab.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .add-class-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .current-class-name {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍎 랜덤 발표 뽑기</h1>
+            <p>누가누가 발표할까?</p>
+        </div>
+
+        <div class="content">
+            <!-- 반 관리 섹션 -->
+            <div class="section">
+                <h2>🏫 반 관리</h2>
+                <div class="class-manager">
+                    <div class="class-tabs" id="classTabs"></div>
+                    <div class="add-class-section">
+                        <input type="text" id="classNameInput" placeholder="새 반 이름 (예: 1반, 2-1반)" style="flex: 1;">
+                        <button class="btn-primary" onclick="addClass()">반 추가</button>
+                    </div>
+                    <p style="color: #9ca3af; font-size: 0.85em; margin-top: 10px;">💡 반을 우클릭하면 삭제할 수 있습니다</p>
+                </div>
+                <div class="current-class-name" id="currentClassName"></div>
+            </div>
+
+            <!-- 뽑기 영역 -->
+            <div class="picker-area">
+                <div class="result-display" id="resultDisplay">?</div>
+                <button class="pick-button" id="pickButton" onclick="pickStudent()">
+                    🎲 발표자 뽑기
+                </button>
+            </div>
+
+            <!-- 뽑기 설정 -->
+            <div class="section">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="preventDuplicate" checked>
+                    <label for="preventDuplicate">중복 방지 (발표한 학생 제외)</label>
+                </div>
+            </div>
+
+            <!-- 통계 -->
+            <div class="section">
+                <div class="stats">
+                    <div class="stat-box">
+                        <div class="stat-value" id="totalStudents">0</div>
+                        <div class="stat-label">전체 학생</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="presentedCount">0</div>
+                        <div class="stat-label">발표 완료</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="remainingCount">0</div>
+                        <div class="stat-label">남은 학생</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 학생 목록 섹션 -->
+            <div class="section">
+                <h2>👥 학생 목록</h2>
+                <div class="list-container">
+                    <div class="list-title waiting-title">⏳ 추첨 대기 학생</div>
+                    <div class="student-list" id="waitingList"></div>
+                </div>
+                
+                <div class="list-container">
+                    <div class="list-title presented-title">✅ 추첨된 학생</div>
+                    <div class="student-list" id="presentedList"></div>
+                </div>
+            </div>
+
+            <!-- 학생 추가 섹션 -->
+            <div class="section">
+                <h2>📝 학생 명단 관리</h2>
+                <div class="input-group">
+                    <input type="text" id="studentInput" placeholder="학생 이름을 입력하세요 (쉼표로 구분하여 여러 명 입력 가능)" onkeypress="handleKeyPress(event)">
+                    <button class="btn-primary" onclick="addStudent()">추가</button>
+                    <button class="btn-secondary" onclick="clearAll()">전체 삭제</button>
+                </div>
+            </div>
+
+            <!-- 발표 이력 -->
+            <div class="section">
+                <h2>📊 발표 이력</h2>
+                <div class="history-section">
+                    <button class="btn-danger" onclick="clearHistory()" style="margin-bottom: 15px;">이력 초기화</button>
+                    <ul class="history-list" id="historyList"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let classes = {}; // 반별 데이터 저장
+        let currentClass = null; // 현재 선택된 반
+
+        // 현재 반의 데이터 가져오기
+        function getCurrentClassData() {
+            if (!currentClass || !classes[currentClass]) {
+                return {
+                    students: [],
+                    presentedStudents: new Set(),
+                    history: []
+                };
+            }
+            return classes[currentClass];
+        }
+
+        // 로컬 스토리지에서 데이터 불러오기
+        function loadData() {
+            const saved = localStorage.getItem('studentPickerData');
+            if (saved) {
+                const data = JSON.parse(saved);
+                classes = data.classes || {};
+                currentClass = data.currentClass || null;
+
+                // Set 객체 복원
+                Object.keys(classes).forEach(className => {
+                    classes[className].presentedStudents = new Set(classes[className].presentedStudents || []);
+                });
+
+                // 기본 반이 없으면 생성
+                if (Object.keys(classes).length === 0) {
+                    classes['1반'] = {
+                        students: [],
+                        presentedStudents: new Set(),
+                        history: []
+                    };
+                    currentClass = '1반';
+                }
+
+                updateClassTabs();
+                updateDisplay();
+                updateHistory();
+            } else {
+                // 최초 실행시 기본 반 생성
+                classes['1반'] = {
+                    students: [],
+                    presentedStudents: new Set(),
+                    history: []
+                };
+                currentClass = '1반';
+                updateClassTabs();
+                updateDisplay();
+            }
+        }
+
+        // 로컬 스토리지에 데이터 저장
+        function saveData() {
+            const data = {
+                classes: {},
+                currentClass: currentClass
+            };
+
+            // Set 객체를 배열로 변환하여 저장
+            Object.keys(classes).forEach(className => {
+                data.classes[className] = {
+                    students: classes[className].students,
+                    presentedStudents: Array.from(classes[className].presentedStudents),
+                    history: classes[className].history
+                };
+            });
+
+            localStorage.setItem('studentPickerData', JSON.stringify(data));
+        }
+
+        // 반 탭 업데이트
+        function updateClassTabs() {
+            const tabsDiv = document.getElementById('classTabs');
+            tabsDiv.innerHTML = '';
+
+            Object.keys(classes).forEach(className => {
+                const tab = document.createElement('div');
+                tab.className = 'class-tab';
+                if (className === currentClass) {
+                    tab.classList.add('active');
+                }
+                tab.textContent = className;
+                
+                // 클릭으로 반 전환
+                tab.onclick = () => switchClass(className);
+                
+                // 우클릭으로 삭제 메뉴
+                tab.oncontextmenu = (e) => {
+                    e.preventDefault();
+                    if (confirm(`${className}을(를) 삭제하시겠습니까?\n해당 반의 모든 데이터가 삭제됩니다.`)) {
+                        deleteClass(className);
+                    }
+                };
+
+                tabsDiv.appendChild(tab);
+            });
+
+            // 현재 반 이름 표시
+            document.getElementById('currentClassName').textContent = `📚 ${currentClass}`;
+        }
+
+        // 반 추가
+        function addClass() {
+            const input = document.getElementById('classNameInput');
+            const className = input.value.trim();
+
+            if (className === '') {
+                alert('반 이름을 입력해주세요.');
+                return;
+            }
+
+            if (classes[className]) {
+                alert('이미 존재하는 반 이름입니다.');
+                return;
+            }
+
+            classes[className] = {
+                students: [],
+                presentedStudents: new Set(),
+                history: []
+            };
+
+            currentClass = className;
+            input.value = '';
+
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        // 반 전환
+        function switchClass(className) {
+            currentClass = className;
+            document.getElementById('resultDisplay').textContent = '?'; // 발표자 결과 초기화
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+        }
+
+        // 반 삭제
+        function deleteClass(className) {
+            if (Object.keys(classes).length === 1) {
+                alert('최소 1개의 반은 있어야 합니다.');
+                return;
+            }
+
+            delete classes[className];
+
+            if (currentClass === className) {
+                currentClass = Object.keys(classes)[0];
+            }
+
+            updateClassTabs();
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                addStudent();
+            }
+        }
+
+        function addStudent() {
+            const input = document.getElementById('studentInput');
+            const inputValue = input.value.trim();
+            
+            if (inputValue === '') {
+                alert('학생 이름을 입력해주세요.');
+                return;
+            }
+            
+            const classData = getCurrentClassData();
+            
+            // 쉼표로 구분하여 여러 이름 처리
+            const names = inputValue.split(',').map(name => name.trim()).filter(name => name !== '');
+            
+            let addedCount = 0;
+            let duplicateCount = 0;
+            
+            names.forEach(name => {
+                if (classData.students.includes(name)) {
+                    duplicateCount++;
+                } else {
+                    classData.students.push(name);
+                    addedCount++;
+                }
+            });
+            
+            input.value = '';
+            updateDisplay();
+            saveData();
+            
+            // 결과 메시지
+            if (addedCount > 0 && duplicateCount > 0) {
+                alert(`${addedCount}명이 추가되었습니다. (중복 ${duplicateCount}명 제외)`);
+            } else if (addedCount > 0) {
+                alert(`${addedCount}명이 추가되었습니다.`);
+            } else if (duplicateCount > 0) {
+                alert('모두 이미 등록된 학생입니다.');
+            }
+        }
+
+        function removeStudent(name) {
+            const classData = getCurrentClassData();
+            classData.students = classData.students.filter(s => s !== name);
+            classData.presentedStudents.delete(name);
+            updateDisplay();
+            saveData();
+        }
+
+        function clearAll() {
+            if (confirm('모든 학생을 삭제하시겠습니까?')) {
+                const classData = getCurrentClassData();
+                classData.students = [];
+                classData.presentedStudents.clear();
+                updateDisplay();
+                saveData();
+            }
+        }
+
+        function updateDisplay() {
+            const classData = getCurrentClassData();
+            const waitingList = document.getElementById('waitingList');
+            const presentedList = document.getElementById('presentedList');
+            
+            waitingList.innerHTML = '';
+            presentedList.innerHTML = '';
+            
+            classData.students.forEach(name => {
+                const tag = document.createElement('div');
+                tag.className = 'student-tag';
+                
+                if (classData.presentedStudents.has(name)) {
+                    tag.classList.add('presented');
+                    tag.innerHTML = `
+                        <span>${name}</span>
+                        <button class="remove-btn" onclick="removeStudent('${name}')">×</button>
+                    `;
+                    presentedList.appendChild(tag);
+                } else {
+                    tag.innerHTML = `
+                        <span>${name}</span>
+                        <button class="remove-btn" onclick="removeStudent('${name}')">×</button>
+                    `;
+                    waitingList.appendChild(tag);
+                }
+            });
+
+            // 빈 상태 메시지
+            if (waitingList.children.length === 0) {
+                waitingList.innerHTML = '<span style="color: #9ca3af;">대기 중인 학생이 없습니다.</span>';
+            }
+            if (presentedList.children.length === 0) {
+                presentedList.innerHTML = '<span style="color: #9ca3af;">추첨된 학생이 없습니다.</span>';
+            }
+
+            // 통계 업데이트
+            document.getElementById('totalStudents').textContent = classData.students.length;
+            document.getElementById('presentedCount').textContent = classData.presentedStudents.size;
+            
+            const preventDuplicate = document.getElementById('preventDuplicate').checked;
+            const remaining = preventDuplicate ? 
+                classData.students.length - classData.presentedStudents.size : 
+                classData.students.length;
+            document.getElementById('remainingCount').textContent = remaining;
+
+            // 뽑기 버튼 활성화/비활성화
+            const pickButton = document.getElementById('pickButton');
+            pickButton.disabled = remaining === 0;
+        }
+
+        function pickStudent() {
+            const classData = getCurrentClassData();
+
+            if (classData.students.length === 0) {
+                alert('학생을 먼저 추가해주세요.');
+                return;
+            }
+
+            const preventDuplicate = document.getElementById('preventDuplicate').checked;
+            let availableStudents = classData.students;
+
+            if (preventDuplicate) {
+                availableStudents = classData.students.filter(s => !classData.presentedStudents.has(s));
+                
+                if (availableStudents.length === 0) {
+                    if (confirm('모든 학생이 발표했습니다. 발표 이력을 초기화하고 다시 시작하시겠습니까?')) {
+                        classData.presentedStudents.clear();
+                        availableStudents = classData.students;
+                        updateDisplay();
+                    } else {
+                        return;
+                    }
+                }
+            }
+
+            // 랜덤 선택
+            const selected = availableStudents[Math.floor(Math.random() * availableStudents.length)];
+            const resultDisplay = document.getElementById('resultDisplay');
+            resultDisplay.textContent = selected;
+            
+            if (preventDuplicate) {
+                classData.presentedStudents.add(selected);
+            }
+            
+            // 이력 추가
+            const now = new Date();
+            classData.history.unshift({
+                name: selected,
+                time: now.toLocaleString('ko-KR')
+            });
+            
+            updateDisplay();
+            updateHistory();
+            saveData();
+        }
+
+        function updateHistory() {
+            const classData = getCurrentClassData();
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '';
+            
+            if (classData.history.length === 0) {
+                historyList.innerHTML = '<li class="history-item">발표 이력이 없습니다.</li>';
+                return;
+            }
+            
+            classData.history.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.className = 'history-item';
+                li.innerHTML = `
+                    <span><strong>${index + 1}.</strong> ${item.name}</span>
+                    <span style="color: #666; font-size: 0.9em;">${item.time}</span>
+                `;
+                historyList.appendChild(li);
+            });
+        }
+
+        function clearHistory() {
+            const classData = getCurrentClassData();
+            
+            if (confirm('발표 이력을 모두 삭제하시겠습니까?')) {
+                classData.history = [];
+                classData.presentedStudents.clear();
+                updateHistory();
+                updateDisplay();
+                saveData();
+                document.getElementById('resultDisplay').textContent = '?';
+            }
+        }
+
+        // 페이지 로드 시 데이터 불러오기
+        window.onload = function() {
+            loadData();
+        };
+    </script>
+</body>
+</html>
